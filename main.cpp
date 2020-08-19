@@ -27,78 +27,78 @@
 #include "EasyAttach_CameraAndLCD.h"
 #include "r_dk2_if.h"
 #include "r_drp_simple_isp.h"
+#include "r_drp_image_rotate.h"
+#include "r_drp_resize_bilinear.h"
+#include "r_drp_cropping.h"
 #include "D6T_44L_06.h"
+#include "SHT30_DIS_B.h"
+#include "BARO_2SMPB_02E.h"
 #include "dcache-control.h"
 #include "AsciiFont.h"
 
+#define M_PI 3.1415926535897932384626433832795
+
 /*! Frame buffer stride: Frame buffer stride should be set to a multiple of 32 or 128
     in accordance with the frame buffer burst transfer mode. */
-#define VIDEO_PIXEL_HW         (640)    /* VGA */
-#define VIDEO_PIXEL_VW         (480)    /* VGA */
+//#define VIDEO_PIXEL_HW         LCD_PIXEL_WIDTH
+//#define VIDEO_PIXEL_VW         LCD_PIXEL_HEIGHT
 
-#define FRAME_BUFFER_STRIDE    (((VIDEO_PIXEL_HW * 1) + 63u) & ~63u)
-#define FRAME_BUFFER_STRIDE_2  (((VIDEO_PIXEL_HW * 2) + 31u) & ~31u)
+#define VIDEO_PIXEL_HW         (1280)       /* HD */
+#define VIDEO_PIXEL_VW         (720)        /* HD */
+#define CROP_PIXEL_HW          (960)
+#define CROP_PIXEL_VW          (672)
+#define LCD_PIXEL_HW           (480)
+#define LCD_PIXEL_VW           (272)
+
+//#define FRAME_BUFFER_STRIDE    (((VIDEO_PIXEL_HW * 1) + 63u) & ~63u)
+#define FRAME_BUFFER_STRIDE    (((VIDEO_PIXEL_HW * 1) + 31u) & ~31u)
+#define FRAME_BUFFER_STRIDE_0  (((CROP_PIXEL_HW * 1) + 31u) & ~31u)
+#define FRAME_BUFFER_STRIDE_2  (((LCD_PIXEL_HW) + 31u) & ~31u)
 #define FRAME_BUFFER_HEIGHT    (VIDEO_PIXEL_VW)
+#define FRAME_BUFFER_HEIGHT_0  (CROP_PIXEL_VW)
+#define FRAME_BUFFER_HEIGHT_2  (LCD_PIXEL_VW)
 
 #define DRP_FLG_TILE_ALL       (R_DK2_TILE_0 | R_DK2_TILE_1 | R_DK2_TILE_2 | R_DK2_TILE_3 | R_DK2_TILE_4 | R_DK2_TILE_5)
 #define DRP_FLG_CAMER_IN       (0x00000100)
 
 /* ASCII BUFFER Parameter GRAPHICS_LAYER_3 */
 #define ASCII_BUFFER_BYTE_PER_PIXEL   (2)
-#define ASCII_BUFFER_STRIDE           (((VIDEO_PIXEL_HW * ASCII_BUFFER_BYTE_PER_PIXEL) + 31u) & ~31u)
+#define ASCII_BUFFER_STRIDE           (((LCD_PIXEL_HW * ASCII_BUFFER_BYTE_PER_PIXEL) + 31u) & ~31u)
 #define ASCII_COLOR_WHITE             (0xFFFF)
 #define ASCII_COLOR_BLACK             (0x00F0)
-#define ASCII_FONT_SIZE               (3)
-
+#define ASCII_FONT_SIZE               (2)
+#define ASCII_FONT_SIZE_S             (1)
 #define TILE_ALPHA_MAX      (0x0F)
 #define TILE_ALPHA_SWITCH2  (0x0A)
 #define TILE_ALPHA_SWITCH1  (0x06)
 #define TILE_ALPHA_DEFAULT  (0x03)
 
-#define TILE_TEMP_MARGIN_UPPER (20)
-#define TILE_TEMP_MARGIN_UNDER (70)
-
+#define TILE_TEMP_MARGIN_UPPER (120)         // original 20   
+#define TILE_TEMP_MARGIN_UNDER (40)         // original 70
 #define TILE_RESO_4         (4)
-#define TILE_RESO_8         (8)
-#define TILE_RESO_16        (16)
-#define TILE_RESO_32        (32)
-#define TILE_RESO_60        (60)
-#define TILE_RESO_64        (64)
+#define TILE_RESO_68        (68)
 #define TILE_RESO_120       (120)
-#define TILE_RESO_160       (160)
-#define TILE_RESO_240       (240)
-#define TILE_RESO_320       (320)
 
-#define TILE_SIZE_HW_4x4    (VIDEO_PIXEL_HW/TILE_RESO_4)
-#define TILE_SIZE_VW_4x4    (VIDEO_PIXEL_VW/TILE_RESO_4)
-#define TILE_SIZE_HW_8x8    (VIDEO_PIXEL_HW/TILE_RESO_8)
-#define TILE_SIZE_VW_8x8    (VIDEO_PIXEL_VW/TILE_RESO_8)
-#define TILE_SIZE_HW_16x16  (VIDEO_PIXEL_HW/TILE_RESO_16)
-#define TILE_SIZE_VW_16x16  (VIDEO_PIXEL_VW/TILE_RESO_16)
-#define TILE_SIZE_HW_32x32  (VIDEO_PIXEL_HW/TILE_RESO_32)
-#define TILE_SIZE_VW_32x32  (VIDEO_PIXEL_VW/TILE_RESO_32)
-#define TILE_SIZE_HW_64x60  (VIDEO_PIXEL_HW/TILE_RESO_64)
-#define TILE_SIZE_VW_64x60  (VIDEO_PIXEL_VW/TILE_RESO_60)
-#define TILE_SIZE_HW_160x120  (VIDEO_PIXEL_HW/TILE_RESO_160)
-#define TILE_SIZE_VW_160x120  (VIDEO_PIXEL_VW/TILE_RESO_120)
-#define TILE_SIZE_HW_320x240  (VIDEO_PIXEL_HW/TILE_RESO_320)
-#define TILE_SIZE_VW_320x240  (VIDEO_PIXEL_VW/TILE_RESO_240)
+#define TILE_SIZE_HW_4x4    (LCD_PIXEL_HW/TILE_RESO_4)
+#define TILE_SIZE_VW_4x4    (LCD_PIXEL_VW/TILE_RESO_4)
+#define TILE_SIZE_HW_120x68  (LCD_PIXEL_HW/TILE_RESO_120)
+#define TILE_SIZE_VW_120x68  (LCD_PIXEL_VW/TILE_RESO_68)
 
 #define SUB_PHASE_MAX       (10)
 #define SUB_PHASE_DEMO1     SUB_PHASE_MAX*2
 #define SUB_PHASE_DEMO2     SUB_PHASE_MAX*3
 #define PHASE_DELAY         (200)
 
-#ifndef M_PI
-#define M_PI                (3.1415926535897932384626433832795)
-#endif
 
 static DisplayBase Display;
 
 static uint8_t fbuf_bayer[FRAME_BUFFER_STRIDE * FRAME_BUFFER_HEIGHT]__attribute((aligned(128)));
-static uint8_t fbuf_yuv[FRAME_BUFFER_STRIDE_2 * FRAME_BUFFER_HEIGHT]__attribute((aligned(32)));
-static uint8_t fbuf_ascii0[ASCII_BUFFER_STRIDE * VIDEO_PIXEL_VW]__attribute((aligned(32)));
-static uint8_t fbuf_ascii1[ASCII_BUFFER_STRIDE * VIDEO_PIXEL_VW]__attribute((aligned(32)));
+static uint8_t fbuf_gray[FRAME_BUFFER_STRIDE * FRAME_BUFFER_HEIGHT]__attribute((section("NC_BSS")));
+static uint8_t fbuf_gray0[FRAME_BUFFER_STRIDE_0 * FRAME_BUFFER_HEIGHT_0]__attribute((section("NC_BSS")));
+static uint8_t fbuf_gray1[FRAME_BUFFER_STRIDE_2 * FRAME_BUFFER_HEIGHT_2]__attribute((section("NC_BSS")));
+static uint8_t fbuf_gray2[FRAME_BUFFER_STRIDE_2 * FRAME_BUFFER_HEIGHT_2]__attribute((section("NC_BSS")));
+static uint8_t fbuf_ascii0[ASCII_BUFFER_STRIDE * LCD_PIXEL_VW]__attribute((aligned(32)));
+static uint8_t fbuf_ascii1[ASCII_BUFFER_STRIDE * LCD_PIXEL_VW]__attribute((aligned(32)));
 
 AsciiFont* p_af0;
 AsciiFont* p_af1;
@@ -106,16 +106,25 @@ int screen = 0;
 
 /* thermal data array[y][x] */
 static float array4x4[TILE_RESO_4][TILE_RESO_4];
-static float array8x8[TILE_RESO_8][TILE_RESO_8];
-static float array16x16[TILE_RESO_16][TILE_RESO_16];
-static float array32x32[TILE_RESO_32][TILE_RESO_32];
-static float array64x60[TILE_RESO_60][TILE_RESO_64];
-static float array160x120[TILE_RESO_120][TILE_RESO_160];
+static float array120x68[TILE_RESO_120][TILE_RESO_68];
 
 static r_drp_simple_isp_t param_isp __attribute((section("NC_BSS")));
+static r_drp_resize_bilinear_t param_resize_bilinear __attribute((section("NC_BSS")));
+static r_drp_image_rotate_t param_image_rotate __attribute((section("NC_BSS")));
+static r_drp_cropping_t param_image_crop __attribute((section("NC_BSS")));
 static uint8_t drp_lib_id[R_DK2_TILE_NUM] = {0};
 static Thread drpTask(osPriorityHigh, 1024*8);
 static D6T_44L_06 d6t_44l(I2C_SDA, I2C_SCL);
+// 2JCIE-EV01-RP1
+static SHT30_DIS_B sht30(I2C_SDA, I2C_SCL);                    // [SHT30-DIS-B] : Temperature / humidity sensor
+static BARO_2SMPB_02E baro_2smpb(I2C_SDA, I2C_SCL);            // [2SMPB-02E]   : MEMS digital barometric pressure sensor
+static uint8_t display_alpha = 0x08;
+static int16_t temp_margin = TILE_TEMP_MARGIN_UPPER;
+static InterruptIn button0(USER_BUTTON0);
+static InterruptIn button1(USER_BUTTON1);
+static int16_t buf[16];
+
+static char title_str[] =   "GR-MANGO THERMOGRAPHY DEMO (OMRON 2JCIE-EV01-RP1+D6T-44L-06)";
 
 /*******************************************************************************
 * Function Name: normalize0to1
@@ -143,9 +152,6 @@ float normalize0to1(int16_t data, int min, int max)
     }
     return normalized;
 }
-/*******************************************************************************
- End of function normalize0to1
-*******************************************************************************/
 
 /*******************************************************************************
 * Function Name: conv_normalize_to_color
@@ -196,13 +202,8 @@ static uint16_t conv_normalize_to_color(uint8_t alpha, float data) {
             red   = 0x0F;
         }
     }
-
     return ((green << 12) | (blue << 8) | (alpha << 4) | red);
 }
-
-/*******************************************************************************
- End of function conv_normalize_to_color
-*******************************************************************************/
 
 /*******************************************************************************
 * Function Name: liner_interpolation
@@ -269,9 +270,6 @@ static void liner_interpolation(float* p_in_array, float* p_out_array, int x_in_
         }
     }
 }
-/*******************************************************************************
- End of function liner_interpolation
-*******************************************************************************/
 
 /*******************************************************************************
 * Function Name: update_thermograph
@@ -285,12 +283,13 @@ static void liner_interpolation(float* p_in_array, float* p_out_array, int x_in_
 *                title_str - title string
 * Return Value : none
 *******************************************************************************/
-void update_thermograph(int reso_x, int reso_y, int tile_hw, int tile_vw, uint8_t alpha, float* p_array, const char* title_str)
+void update_thermograph(int reso_x, int reso_y, int tile_hw, int tile_vw, uint8_t alpha, float* p_array, const char* head_str, const char* foot_str)
 {
     AsciiFont* p_af;
     uint8_t*   p_fbuf;
     int x, y;
     uint16_t color;
+    char str_buf[64];
 
     if (0 == screen)
     {
@@ -311,8 +310,18 @@ void update_thermograph(int reso_x, int reso_y, int tile_hw, int tile_vw, uint8_
             p_af->Erase(color, (tile_hw * x), (tile_vw * y), tile_hw, tile_vw);
         }
     }
-    p_af->Erase(ASCII_COLOR_WHITE, 0, 0, 30, 20);
-    p_af->DrawStr(title_str, 0, 0, ASCII_COLOR_BLACK, ASCII_FONT_SIZE, 18);
+    //p_af->Erase(ASCII_COLOR_WHITE, 0, 0, 30, 20);
+    p_af->DrawStr(head_str, 0, 0, ASCII_COLOR_WHITE, ASCII_FONT_SIZE, 40);
+    p_af->DrawStr(foot_str, 0, 264, ASCII_COLOR_WHITE, ASCII_FONT_SIZE_S, 80);
+    for (int y = 0; y < 4; y++) {
+        for (int x = 0;x < 4; x++) {
+            int px = LCD_PIXEL_HW / 4 * (x + 1) - LCD_PIXEL_HW / 6;
+            int py = LCD_PIXEL_VW / 4 * (y + 1) - LCD_PIXEL_VW / 7;
+
+            sprintf(str_buf, "%4.1f   ", buf[y*4+x] / 10.0);
+            p_af->DrawStr(str_buf, px, py, ASCII_COLOR_WHITE, 1, 4);
+        }
+    }
 
     dcache_clean(p_fbuf, sizeof(fbuf_ascii0));
     Display.Graphics_Read_Change(DisplayBase::GRAPHICS_LAYER_3, (void *)p_fbuf);
@@ -328,57 +337,17 @@ void update_thermograph(int reso_x, int reso_y, int tile_hw, int tile_vw, uint8_
 
     return;
 }
-/*******************************************************************************
- End of function update_thermograph
-*******************************************************************************/
 
 /*******************************************************************************
-* Function Name: clear_thermograph
-* Description  : Turn off the thermograph on the display.
-* Arguments    : title_str - title string
-* Return Value : none
+* Function Name: IntCallbackFunc_Vfield
 *******************************************************************************/
-void clear_thermograph(const char* title_str)
-{
-    AsciiFont* p_af;
-    uint8_t*   p_fbuf;
-
-    if (0 == screen)
-    {
-        p_af = p_af0;
-        p_fbuf = &fbuf_ascii0[0];
-    }
-    else
-    {
-        p_af = p_af1;
-        p_fbuf = &fbuf_ascii1[0];
-    }
-
-    p_af->Erase(0x0000);
-    p_af->Erase(ASCII_COLOR_WHITE, 0, 0, 30, 20);
-    p_af->DrawStr(title_str, 0, 0, ASCII_COLOR_BLACK, ASCII_FONT_SIZE, 10);
-    dcache_clean(p_fbuf, sizeof(fbuf_ascii0));
-    Display.Graphics_Read_Change(DisplayBase::GRAPHICS_LAYER_3, (void *)p_fbuf);
-
-    if (0 == screen)
-    {
-        screen = 1;
-    }
-    else
-    {
-        screen = 0;
-    }
-
-    return;
-}
-/*******************************************************************************
- End of function clear_thermograph
-*******************************************************************************/
-
 static void IntCallbackFunc_Vfield(DisplayBase::int_type_t int_type) {
     drpTask.flags_set(DRP_FLG_CAMER_IN);
 }
 
+/*******************************************************************************
+* Function Name: cb_drp_finish
+*******************************************************************************/
 static void cb_drp_finish(uint8_t id) {
     uint32_t tile_no;
     uint32_t set_flgs = 0;
@@ -392,6 +361,9 @@ static void cb_drp_finish(uint8_t id) {
     drpTask.flags_set(set_flgs);
 }
 
+/*******************************************************************************
+* Function Name: Start_Video_Camera
+*******************************************************************************/
 static void Start_Video_Camera(void) {
     // Video capture setting (progressive form fixed)
     Display.Video_Write_Setting(
@@ -407,19 +379,22 @@ static void Start_Video_Camera(void) {
     EasyAttach_CameraStart(Display, DisplayBase::VIDEO_INPUT_CHANNEL_0);
 }
 
+/*******************************************************************************
+* Function Name: Start_LCD_Display
+*******************************************************************************/
 #if MBED_CONF_APP_LCD
 static void Start_LCD_Display(void) {
     DisplayBase::rect_t rect;
 
     rect.vs = 0;
-    rect.vw = VIDEO_PIXEL_VW;
+    rect.vw = LCD_PIXEL_VW;
     rect.hs = 0;
-    rect.hw = VIDEO_PIXEL_HW;
+    rect.hw = LCD_PIXEL_HW;
     Display.Graphics_Read_Setting(
         DisplayBase::GRAPHICS_LAYER_0,
-        (void *)fbuf_yuv,
+        (void *)fbuf_gray2,
         FRAME_BUFFER_STRIDE_2,
-        DisplayBase::GRAPHICS_FORMAT_YCBCR422,
+        DisplayBase::GRAPHICS_FORMAT_CLUT8,
         DisplayBase::WR_RD_WRSWA_32_16_8BIT,
         &rect
     );
@@ -430,15 +405,18 @@ static void Start_LCD_Display(void) {
 }
 #endif
 
+/*******************************************************************************
+* Function Name: Start_Thermo_Display
+*******************************************************************************/
 static void Start_Thermo_Display(void) {
     DisplayBase::rect_t rect;
 
     memset(fbuf_ascii1, 0, sizeof(fbuf_ascii1));
 
     rect.vs = 0;
-    rect.vw = VIDEO_PIXEL_VW;
+    rect.vw = LCD_PIXEL_VW;
     rect.hs = 0;
-    rect.hw = VIDEO_PIXEL_HW;
+    rect.hw = LCD_PIXEL_HW;
     Display.Graphics_Read_Setting(
         DisplayBase::GRAPHICS_LAYER_3,
         (void *)fbuf_ascii0,
@@ -451,9 +429,13 @@ static void Start_Thermo_Display(void) {
 
 }
 
-
+/*******************************************************************************
+* Function Name: drp_task
+*******************************************************************************/
 static void drp_task(void) {
-    EasyAttach_Init(Display);
+    //EasyAttach_Init(Display, 480, 272);
+    EasyAttach_Init(Display, 640, 480);
+    //EasyAttach_Init(Display);
     // Interrupt callback function setting (Field end signal for recording function in scaler 0)
     Display.Graphics_Irq_Handler_Set(DisplayBase::INT_TYPE_S0_VFIELD, 0, IntCallbackFunc_Vfield);
     Start_Video_Camera();
@@ -464,52 +446,129 @@ static void drp_task(void) {
 
     R_DK2_Initialize();
 
-    /* Load DRP Library                 */
-    /*        +-----------------------+ */
-    /* tile 0 |                       | */
-    /*        +                       + */
-    /* tile 1 |                       | */
-    /*        +                       + */
-    /* tile 2 |                       | */
-    /*        + SimpleIsp bayer2yuv_6 + */
-    /* tile 3 |                       | */
-    /*        +                       + */
-    /* tile 4 |                       | */
-    /*        +                       + */
-    /* tile 5 |                       | */
-    /*        +-----------------------+ */
-    R_DK2_Load(g_drp_lib_simple_isp_bayer2yuv_6,
-               R_DK2_TILE_0,
-               R_DK2_TILE_PATTERN_6, NULL, &cb_drp_finish, drp_lib_id);
-    R_DK2_Activate(0, 0);
-
-    memset(&param_isp, 0, sizeof(param_isp));
-    param_isp.src    = (uint32_t)fbuf_bayer;
-    param_isp.dst    = (uint32_t)fbuf_yuv;
-    param_isp.width  = VIDEO_PIXEL_HW;
-    param_isp.height = VIDEO_PIXEL_VW;
-    param_isp.gain_r = 0x1800;
-    param_isp.gain_g = 0x1000;
-    param_isp.gain_b = 0x1C00;
-    param_isp.bias_r = -16;
-    param_isp.bias_g = -16;
-    param_isp.bias_b = -16;
-
     while (true) {
         ThisThread::flags_wait_all(DRP_FLG_CAMER_IN);
+        R_DK2_Load(g_drp_lib_simple_isp_bayer2grayscale_6,
+        //    g_drp_lib_simple_isp_bayer2yuv_6,
+                   R_DK2_TILE_0,
+                   R_DK2_TILE_PATTERN_6, NULL, &cb_drp_finish, drp_lib_id);
+        R_DK2_Activate(0, 0);
 
-        // Start DRP and wait for completion
+        memset(&param_isp, 0, sizeof(param_isp));
+        param_isp.src    = (uint32_t)fbuf_bayer;
+        param_isp.dst    = (uint32_t)fbuf_gray;
+        param_isp.width  = VIDEO_PIXEL_HW;
+        param_isp.height = VIDEO_PIXEL_VW;
+        param_isp.gain_r = 0x1800;
+        param_isp.gain_g = 0x1000;
+        param_isp.gain_b = 0x1C00;
+        param_isp.bias_r = -16;
+        param_isp.bias_g = -16;
+        param_isp.bias_b = -16;
         R_DK2_Start(drp_lib_id[0], (void *)&param_isp, sizeof(r_drp_simple_isp_t));
         ThisThread::flags_wait_all(DRP_FLG_TILE_ALL);
+        R_DK2_Unload(0, drp_lib_id);
+
+        /* clop */
+        R_DK2_Load(g_drp_lib_cropping,
+            R_DK2_TILE_0,
+            R_DK2_TILE_PATTERN_1_1_1_1_1_1, NULL, &cb_drp_finish, drp_lib_id);
+        R_DK2_Activate(0, 0);
+        memset(&param_resize_bilinear, 0, sizeof(param_resize_bilinear));
+        param_image_crop.src    = (uint32_t)fbuf_gray;
+        param_image_crop.dst    = (uint32_t)fbuf_gray0;
+        param_image_crop.src_width  = VIDEO_PIXEL_HW;
+        param_image_crop.src_height = VIDEO_PIXEL_VW;
+        param_image_crop.offset_x   = (VIDEO_PIXEL_HW - CROP_PIXEL_HW) / 2;
+        param_image_crop.offset_y   = 0; //(VIDEO_PIXEL_VW - CROP_PIXEL_VW) / 2;
+        param_image_crop.dst_width  = CROP_PIXEL_HW;
+        param_image_crop.dst_height = CROP_PIXEL_VW;
+        R_DK2_Start(drp_lib_id[0], (void *)&param_image_crop, sizeof(r_drp_cropping_t));
+        ThisThread::flags_wait_all(R_DK2_TILE_0); 
+        R_DK2_Unload(0, drp_lib_id);
+
+        /* resize bilinear */
+        R_DK2_Load(g_drp_lib_resize_bilinear,
+            R_DK2_TILE_0,
+            R_DK2_TILE_PATTERN_6, NULL, &cb_drp_finish, drp_lib_id);
+        R_DK2_Activate(0, 0);
+        memset(&param_resize_bilinear, 0, sizeof(param_resize_bilinear));
+        param_resize_bilinear.src    = (uint32_t)fbuf_gray0;
+        param_resize_bilinear.dst    = (uint32_t)fbuf_gray1;
+        param_resize_bilinear.src_width  = CROP_PIXEL_HW;
+        param_resize_bilinear.src_height = CROP_PIXEL_VW;
+        param_resize_bilinear.dst_width  = LCD_PIXEL_HW;
+        param_resize_bilinear.dst_height = LCD_PIXEL_VW;
+        R_DK2_Start(drp_lib_id[0], (void *)&param_resize_bilinear, sizeof(r_drp_resize_bilinear_t));
+        ThisThread::flags_wait_all(DRP_FLG_TILE_ALL);
+        R_DK2_Unload(0, drp_lib_id);
+
+        /* image rotate (flip) */
+
+        R_DK2_Load(g_drp_lib_image_rotate,
+            R_DK2_TILE_0,
+            R_DK2_TILE_PATTERN_1_1_1_1_1_1, NULL, &cb_drp_finish, drp_lib_id);
+        R_DK2_Activate(0, 0);
+        memset(&param_image_rotate, 0, sizeof(param_image_rotate));
+        param_image_rotate.src    = (uint32_t)fbuf_gray1;
+        param_image_rotate.dst    = (uint32_t)fbuf_gray2;
+        param_image_rotate.src_width  = LCD_PIXEL_HW;
+        param_image_rotate.src_height = LCD_PIXEL_VW;
+        param_image_rotate.dst_stride  = FRAME_BUFFER_STRIDE_2;
+        param_image_rotate.mode = 4;            // image flip
+        R_DK2_Start(drp_lib_id[0], (void *)&param_image_rotate, sizeof(r_drp_image_rotate_t));
+        ThisThread::flags_wait_all(R_DK2_TILE_0);   //DRP_FLG_TILE_ALL);
+        R_DK2_Unload(0, drp_lib_id);
+
     }
 }
+/*******************************************************************************
+* Function Name: User button callback
+*******************************************************************************/
+static void button_fall0(void) {
+    display_alpha++;
+    display_alpha &= 0x0f;
+}
 
+static void button_fall1(void) {
+    temp_margin += 10;
+    if (temp_margin > 140) temp_margin = 20;
+}
+
+/*******************************************************************************
+* Function Name: flip : mirror sensord data
+*******************************************************************************/
+static int16_t flip_buf(int16_t *buf) {
+    int16_t x, y, t, max;
+
+    max = -32768;
+    for (y = 0; y < 4; y++) {
+        for (x = 0; x < 2; x++) {
+            t = buf[y * 4 + x];
+            buf[y * 4 + x] = buf[y * 4 + 3 - x];
+            buf[y * 4 + 3 - x] = t;
+        }
+        for (x = 0; x < 4; x++) {
+            if (buf[y * 4 + x] > max) max = buf[y * 4 + x];
+        }
+    }
+    return max;
+}
+/*******************************************************************************
+* Function Name: main function
+*******************************************************************************/
 int main(void) {
     int16_t pdta;
-    int16_t buf[16];
-    int16_t phase = 0;
-    int16_t sub_phase = 0;
-    char    str[32];
+    char    head_str[100];
+    char    foot_str[100];
+    static int16_t max_temp;
+    int32_t sht30_humi, sht30_temp;
+    uint32_t press, dp, dt;
+    int16_t temp16;
+
+    // Set up button
+    button0.fall(&button_fall0);
+    button1.fall(&button_fall1);
 
     // Start DRP task
     drpTask.start(callback(drp_task));
@@ -518,11 +577,13 @@ int main(void) {
 
     // setup sensors
     d6t_44l.setup();
+    baro_2smpb.setup();
+    sht30.setup();
 
     ThisThread::sleep_for(150);
 
-    AsciiFont ascii_font0(fbuf_ascii0, VIDEO_PIXEL_HW, VIDEO_PIXEL_VW, ASCII_BUFFER_STRIDE, ASCII_BUFFER_BYTE_PER_PIXEL);
-    AsciiFont ascii_font1(fbuf_ascii1, VIDEO_PIXEL_HW, VIDEO_PIXEL_VW, ASCII_BUFFER_STRIDE, ASCII_BUFFER_BYTE_PER_PIXEL);
+    AsciiFont ascii_font0(fbuf_ascii0, LCD_PIXEL_HW, LCD_PIXEL_VW, ASCII_BUFFER_STRIDE, ASCII_BUFFER_BYTE_PER_PIXEL);
+    AsciiFont ascii_font1(fbuf_ascii1, LCD_PIXEL_HW, LCD_PIXEL_VW, ASCII_BUFFER_STRIDE, ASCII_BUFFER_BYTE_PER_PIXEL);
 
     p_af0 = &ascii_font0;
     p_af1 = &ascii_font1;
@@ -531,11 +592,18 @@ int main(void) {
         int x, y;
 
         printf("\x1b[%d;%dH", 0, 0);  // Move cursor (y , x)
-
+        // get ir data
         while (d6t_44l.read(&pdta, &buf[0]) == false) {
             ThisThread::sleep_for(10);
         }
-
+        max_temp = flip_buf(buf);        
+        for (y = 0; y < TILE_RESO_4; y++)
+        {
+            for (x = 0; x < TILE_RESO_4; x++)
+            {
+                array4x4[y][x] = normalize0to1(buf[x + (TILE_RESO_4*y)], pdta - TILE_TEMP_MARGIN_UNDER,  pdta + temp_margin);
+            }
+        }
         printf("PTAT: %6.1f[degC]\r\n", pdta / 10.0);
         for (int i = 0; i < 16; i++) {
             printf("%4.1f, ", buf[i] / 10.0);
@@ -545,178 +613,15 @@ int main(void) {
             }
         }
 
-        for (y = 0; y < TILE_RESO_4; y++)
-        {
-            for (x = 0; x < TILE_RESO_4; x++)
-            {
-                array4x4[y][x] = normalize0to1(buf[x + (TILE_RESO_4*y)], pdta - TILE_TEMP_MARGIN_UNDER,  pdta + TILE_TEMP_MARGIN_UPPER);
-            }
-        }
-
-        switch (phase)
-        {
-            case 0:
-                sprintf( str, "PTAT[%2.1f]   4*4  " , pdta/10.0 );
-                update_thermograph(TILE_RESO_4, TILE_RESO_4, TILE_SIZE_HW_4x4, TILE_SIZE_VW_4x4, TILE_ALPHA_MAX, &array4x4[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_DEMO1)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 1:
-                sprintf( str, "PTAT[%2.1f]   8*8  " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array8x8[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_8, TILE_RESO_8);
-                update_thermograph(TILE_RESO_8, TILE_RESO_8, TILE_SIZE_HW_8x8, TILE_SIZE_VW_8x8, TILE_ALPHA_MAX, &array8x8[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 2:
-                sprintf( str, "PTAT[%2.1f]  16*16 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array16x16[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_16, TILE_RESO_16);
-                update_thermograph(TILE_RESO_16, TILE_RESO_16, TILE_SIZE_HW_16x16, TILE_SIZE_VW_16x16, TILE_ALPHA_MAX, &array16x16[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 3:
-                sprintf( str, "PTAT[%2.1f]  32*32 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array32x32[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_32, TILE_RESO_32);
-                update_thermograph(TILE_RESO_32, TILE_RESO_32, TILE_SIZE_HW_32x32, TILE_SIZE_VW_32x32, TILE_ALPHA_MAX, &array32x32[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 4:
-                sprintf( str, "PTAT[%2.1f]  64*60 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array64x60[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_64, TILE_RESO_60);
-                update_thermograph(TILE_RESO_64, TILE_RESO_60, TILE_SIZE_HW_64x60, TILE_SIZE_VW_64x60, TILE_ALPHA_MAX, &array64x60[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 5:
-                sprintf( str, "PTAT[%2.1f] 160*120" , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array160x120[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_160, TILE_RESO_120);
-                update_thermograph(TILE_RESO_160, TILE_RESO_120, TILE_SIZE_HW_160x120, TILE_SIZE_VW_160x120, TILE_ALPHA_MAX, &array160x120[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_DEMO2)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 6:
-                sprintf( str, "PTAT[%2.1f] 160*120" , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array160x120[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_160, TILE_RESO_120);
-                update_thermograph(TILE_RESO_160, TILE_RESO_120, TILE_SIZE_HW_160x120, TILE_SIZE_VW_160x120, TILE_ALPHA_SWITCH2, &array160x120[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 7:
-                sprintf( str, "PTAT[%2.1f] 160*120" , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array160x120[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_160, TILE_RESO_120);
-                update_thermograph(TILE_RESO_160, TILE_RESO_120, TILE_SIZE_HW_160x120, TILE_SIZE_VW_160x120, TILE_ALPHA_SWITCH1, &array160x120[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 8:
-                sprintf( str, "PTAT[%2.1f] 160*120" , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array160x120[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_160, TILE_RESO_120);
-                update_thermograph(TILE_RESO_160, TILE_RESO_120, TILE_SIZE_HW_160x120, TILE_SIZE_VW_160x120, TILE_ALPHA_DEFAULT, &array160x120[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 9:
-                sprintf( str, "PTAT[%2.1f]  64*60 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array64x60[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_64, TILE_RESO_60);
-                update_thermograph(TILE_RESO_64, TILE_RESO_60, TILE_SIZE_HW_64x60, TILE_SIZE_VW_64x60, TILE_ALPHA_DEFAULT, &array64x60[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 10:
-                sprintf( str, "PTAT[%2.1f]  32*32 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array32x32[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_32, TILE_RESO_32);
-                update_thermograph(TILE_RESO_32, TILE_RESO_32, TILE_SIZE_HW_32x32, TILE_SIZE_VW_32x32, TILE_ALPHA_DEFAULT, &array32x32[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 11:
-                sprintf( str, "PTAT[%2.1f]  16*16 " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array16x16[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_16, TILE_RESO_16);
-                update_thermograph(TILE_RESO_16, TILE_RESO_16, TILE_SIZE_HW_16x16, TILE_SIZE_VW_16x16, TILE_ALPHA_DEFAULT, &array16x16[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 12:
-                sprintf( str, "PTAT[%2.1f]   8*8  " , pdta/10.0 );
-                liner_interpolation(&array4x4[0][0], &array8x8[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_8, TILE_RESO_8);
-                update_thermograph(TILE_RESO_8, TILE_RESO_8, TILE_SIZE_HW_8x8, TILE_SIZE_VW_8x8, TILE_ALPHA_DEFAULT, &array8x8[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            case 13:
-                sprintf( str, "PTAT[%2.1f]   4*4  " , pdta/10.0 );
-                update_thermograph(TILE_RESO_4, TILE_RESO_4, TILE_SIZE_HW_4x4, TILE_SIZE_VW_4x4, TILE_ALPHA_DEFAULT, &array4x4[0][0], str);
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_DEMO1)
-                {
-                    sub_phase = 0;
-                    phase++;
-                }
-                break;
-            default:
-                clear_thermograph("off");
-                sub_phase++;
-                if (sub_phase >= SUB_PHASE_MAX)
-                {
-                    sub_phase = 0;
-                    phase = 0;
-                }
-                break;
-        }
+        // get temp & humidity
+        sht30.read(&sht30_humi, &sht30_temp);
+        // get pressure
+        baro_2smpb.read(&press, &temp16, &dp, &dt);
+        // disp thermograph
+        sprintf(head_str, "MAX:%5.1fC(T:%5.1fC H:%5.1f%% P:%6.1fHP)" , max_temp / 10.0, sht30_temp / 100.0, sht30_humi / 100.0, press / 1000.0 );
+        sprintf(foot_str, "%s PTAT:%5.1fC Alfa:%1XH", title_str, pdta / 10.0, display_alpha);
+        liner_interpolation(&array4x4[0][0], &array120x68[0][0], TILE_RESO_4, TILE_RESO_4, TILE_RESO_120, TILE_RESO_68);
+        update_thermograph(TILE_RESO_120, TILE_RESO_68, TILE_SIZE_HW_120x68, TILE_SIZE_VW_120x68, display_alpha, &array120x68[0][0], head_str, foot_str);
 
         ThisThread::sleep_for(PHASE_DELAY);
     }
